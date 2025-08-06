@@ -2,6 +2,14 @@
 
 Este proyecto implementa un generador de árboles sintácticos para expresiones regulares, utilizando el algoritmo Shunting Yard para convertir expresiones infijas a notación postfija y posteriormente construir representaciones visuales de los árboles sintácticos.
 
+---
+
+## 📹 Video demostrativo
+
+[![Video de YouTube](https://img.youtube.com/vi/hMfBXDaeyiI/0.jpg)](https://youtu.be/hMfBXDaeyiI)
+
+---
+
 ## 📋 Descripción
 
 El proyecto consta de tres componentes principales:
