@@ -1,172 +1,83 @@
 # Algoritmo Shunting Yard para Expresiones Regulares
 
+import re, sys
+from pathlib import Path
 
-# Precedencia de operadores - números más altos = mayor precedencia  
-PRECEDENCE = {
-    '*': 3,  # Estrella de Kleene (cero o más)
-    '+': 3,  # Más (uno o más) 
-    '?': 3,  # Interrogación (cero o uno)
-    '.': 2,  # Concatenación implícita
-    '|': 1,  # Alternancia (OR)
-}
+# precedencia y asociatividad
+PRECEDENCE = {'|': 1, '°': 2, '*': 3, '+': 3, '?': 3}  
+LEFT = {'|', '°'}
 
-# Asociatividad - determinamos cómo agrupar operadores de igual precedencia
-LEFT_ASSOCIATIVE = {'.', '|'}
-RIGHT_ASSOCIATIVE = {'*', '+', '?'}
+CONCAT_PREV = set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ε)*+?}')
+CONCAT_NEXT = set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ε([')
 
 
-def insert_concatenation(expression):
+def expand_clases(expr: str) -> str:
     """
-    Inserta '.' de concatenación donde corresponde.
-    Se eliminan todos los espacios antes de procesar.
+    expandir clases de caracteres:
+    [ab]  →  (a|b)
     """
-    # 1) quitar espacios
-    expression = expression.replace(' ', '')
-    
-    result = ''
-    for i, current in enumerate(expression):
-        result += current
+    return re.sub(r'\[([^]]+)]',
+                  lambda m: m.group(1) if len(m.group(1)) == 1 else '(' + '|'.join(m.group(1)) + ')',
+                  expr)
 
-        if i + 1 < len(expression):
-            next_char = expression[i + 1]
+def add_concat(expr: str) -> str:
+    out = []
+    for i, ch in enumerate(expr):
+        out.append(ch)
+        if i + 1 < len(expr):
+            nx = expr[i + 1]
+            if ch in CONCAT_PREV and nx in CONCAT_NEXT and nx not in '|*+?{':
+                out.append('°')
+    return ''.join(out)
 
-            if (
-                (current.isalnum() or current in {'ε', '*', '+', '?', ')'})
-                and
-                (next_char.isalnum() or next_char == 'ε' or next_char == '(')
-            ):
-                result += '.'
+# tokenización: clases, escapes, cuantificadores, operadores y literales
+TOKEN = re.compile(r'''
+    \[[^]]+]        |   # clase de caracteres
+    \\ .            |   # carácter escapado
+    \{[^}]+}        |   # cuantificador {n}, {n,}, {n,m}
+    [()*+?|°]        |   # operadores y paréntesis
+    [^()*+?|°\[\\{}\s]   # literales (excluye espacios)
+''', re.X)
 
-    return result
+prec  = lambda op: 3 if op.startswith('{') else PRECEDENCE[op]
+left  = lambda op: False if op.startswith('{') else op in LEFT
 
 
 
-
-def to_postfix(expression):
-    """
-    Convierte expresión infix a postfix usando algoritmo Shunting Yard
-    Versión mejorada con mejor manejo de casos especiales
-    """
-    output = []
-    operator_stack = []
-    steps = []
-    
-    i = 0
-    while i < len(expression):
-        token = expression[i]
-        
-        # Manejar caracteres escapados
-        if token == '\\' and i + 1 < len(expression):
-            escaped_char = token + expression[i + 1]
-            output.append(escaped_char)
-            steps.append(f"Carácter escapado '{escaped_char}' → salida: {output}")
-            i += 2  # saltar ambos caracteres
+def to_postfix(expr: str) -> str:
+    expr = expr.replace(' ', '')  # quitar espacios
+    output, stack = [], []
+    for tok in TOKEN.findall(expr):
+        if tok not in PRECEDENCE and tok not in '()*+?|°' and not tok.startswith('{'):
+            output.append(tok)
             continue
-        
-        # Operandos (letras, números, épsilon)
-        if token.isalnum() or token == 'ε':
-            output.append(token)
-            steps.append(f"Operando '{token}' → salida: {output}")
-            
-        # Paréntesis de apertura
-        elif token == '(':
-            operator_stack.append(token)
-            steps.append(f"'(' → pila: {operator_stack}")
-            
-        # Paréntesis de cierre
-        elif token == ')':
-            # Vaciar pila hasta encontrar '('
-            while operator_stack and operator_stack[-1] != '(':
-                operator = operator_stack.pop()
-                output.append(operator)
-                steps.append(f"Vaciar hasta '(' → '{operator}' a salida: {output}")
-            
-            # Quitar el '(' de la pila
-            if operator_stack:
-                operator_stack.pop()
-                steps.append("Remover '(' de la pila")
-                
-        # Operadores
-        elif token in PRECEDENCE:
-            # Aplicar reglas de precedencia y asociatividad
-            while (
-                operator_stack and 
-                operator_stack[-1] in PRECEDENCE and
-                (
-                    PRECEDENCE[operator_stack[-1]] > PRECEDENCE[token] or
-                    (PRECEDENCE[operator_stack[-1]] == PRECEDENCE[token] and 
-                     token in LEFT_ASSOCIATIVE)
-                )
-            ):
-                operator = operator_stack.pop()
-                output.append(operator)
-                steps.append(f"Precedencia: '{operator}' → salida: {output}")
-            
-            operator_stack.append(token)
-            steps.append(f"Operador '{token}' → pila: {operator_stack}")
-        
-        i += 1
-    
-    # Vaciar pila restante
-    while operator_stack:
-        operator = operator_stack.pop()
-        output.append(operator)
-        steps.append(f"Vaciar pila final → '{operator}' a salida: {output}")
-    
-    return ''.join(output), steps
+        if tok == '(':  # apilar paréntesis
+            stack.append(tok)
+            continue
+        if tok == ')':  # vaciar hasta '('
+            while stack and stack[-1] != '(': output.append(stack.pop())
+            if stack: stack.pop()
+            continue
+        # operadores (incl. cuantificadores)
+        while stack and stack[-1] != '(':  # comparar precedencia
+            top = stack[-1]
+            if prec(top) > prec(tok) or (prec(top) == prec(tok) and left(tok)):
+                output.append(stack.pop())
+            else:
+                break
+        stack.append(tok)
+    while stack:
+        output.append(stack.pop())
+    return ' '.join(output)
 
 
-def get_only_postfix(expression):
-    """
-    Convierte expresión infix a postfix y devuelve solo la notación postfija
-    """
-    with_concat = insert_concatenation(expression)
-    postfix, _ = to_postfix(with_concat)
-    return postfix
+def process_file(path: str):
+    for n, raw in enumerate(Path(path).read_text(encoding='utf8').splitlines(), 1):
+        raw = raw.strip()
+        if not raw:
+            continue
+        expr = add_concat(expand_clases(raw))
+        print(f'# {n} {raw}\n{to_postfix(expr)}\n')
 
-
-def process_file(filename):
-    """
-    Procesa archivo con expresiones regulares y las convierte a notación postfija
-    Versión mejorada con mejor formato de salida
-    """
-    try:
-        with open(filename, 'r', encoding='utf-8') as file:
-            line_number = 0
-            
-            for line in file:
-                original_expression = line.strip()
-                
-                # Saltear líneas vacías
-                if not original_expression:
-                    continue
-                
-                line_number += 1
-                print(f"\n{'='*50}")
-                print(f"EXPRESIÓN {line_number}: {original_expression}")
-                print(f"{'='*50}")
-                
-                # Paso 1: Insertar concatenaciones explícitas
-                with_concat = insert_concatenation(original_expression)
-                print(f"Con concatenaciones: {with_concat}")
-                
-                # Paso 2: Convertir a postfijo
-                postfix_result, steps = to_postfix(with_concat)
-                
-                # Mostrar proceso paso a paso
-                print("\nProceso paso a paso:")
-                for i, step in enumerate(steps, 1):
-                    print(f"  {i:2d}. {step}")
-                
-                print(f"\n✓ RESULTADO FINAL: {postfix_result}")
-                
-    except FileNotFoundError:
-        print(f"Error: No se pudo encontrar el archivo '{filename}'")
-    except UnicodeDecodeError:
-        print(f"Error: Problema de codificación en el archivo '{filename}'")
-    except Exception as error:
-        print(f"Error inesperado: {error}")
-
-
-if __name__ == "__main__":
-    process_file("expresiones.txt")
+if __name__ == '__main__':
+    process_file(sys.argv[1])
